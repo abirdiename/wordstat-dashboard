@@ -6,7 +6,28 @@ import requests
 from datetime import datetime, timedelta, date
 import calendar
 
-app = Flask(__name__)
+import os
+from flask import Flask, send_from_directory, jsonify, request
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# static_url_path="" позволит открывать /style.css и /script.js напрямую
+app = Flask(__name__, static_folder=BASE_DIR, static_url_path="")
+
+@app.get("/health")
+def health():
+    return "OK", 200
+
+@app.get("/")
+def home():
+    # index.html лежит рядом с app.py
+    return send_from_directory(BASE_DIR, "index.html")
+
+# чтобы /style.css, /script.js и другие файлы из корня тоже отдавались
+@app.get("/<path:filename>")
+def root_files(filename):
+    return send_from_directory(BASE_DIR, filename)
+
 
 # ========== НАСТРОЙКИ ==========
 WORDSTAT_BASE_URL = "https://api.wordstat.yandex.net"
@@ -118,9 +139,7 @@ def call_wordstat_dynamics(phrase: str, period: str, from_date: str, to_date: st
 
 
 # ========== РОУТЫ ==========
-@app.get("/health")
-def health():
-    return "OK"
+
 
 
 @app.post("/api/wordstat")
@@ -191,3 +210,9 @@ def wordstat_proxy():
 if __name__ == "__main__":
     # host=127.0.0.1 чтобы работало локально, порт 3001 как в твоём script.js
     app.run(host="127.0.0.1", port=3001, debug=True)
+
+from flask import send_from_directory
+
+@app.get("/")
+def home():
+    return send_from_directory(".", "index.html")
