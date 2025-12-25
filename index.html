@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Wordstat Trends Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">W</div>
+        <div>
+          <div class="title">Wordstat Trends</div>
+          <div class="subtitle">Динамика запросов по продуктам</div>
+        </div>
+      </div>
+
+      <div class="status">
+        <span id="statusDot" class="dot idle"></span>
+        <span id="statusText" class="statusText">Готово</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel card">
+        <h2>Фильтры</h2>
+
+        <div class="grid">
+          <label class="field">
+            <span class="label">Продукт</span>
+            <select id="productSelect"></select>
+          </label>
+
+          <label class="field">
+            <span class="label">Тип запросов</span>
+            <div class="segmented" id="typeSegment">
+              <button class="seg active" data-type="brand">Бренд</button>
+              <button class="seg" data-type="generic">Дженерик</button>
+            </div>
+          </label>
+
+          <label class="field">
+            <span class="label">Агрегация</span>
+            <div class="segmented" id="granularitySegment">
+              <button class="seg active" data-granularity="day">День</button>
+              <button class="seg" data-granularity="week">Неделя</button>
+              <button class="seg" data-granularity="month">Месяц</button>
+              <button class="seg" data-granularity="year">Год</button>
+            </div>
+          </label>
+
+          <label class="field">
+            <span class="label">Период</span>
+            <div class="range">
+              <input id="dateFrom" type="date" />
+              <span class="dash">—</span>
+              <input id="dateTo" type="date" />
+            </div>
+          </label>
+
+          <div class="field">
+            <span class="label">Запросы (редактор)</span>
+            <div class="actionsRow">
+              <button id="editQueriesBtn" class="btn secondary">Редактировать список</button>
+              <button id="runBtn" class="btn primary">Построить</button>
+            </div>
+            <div class="hint">
+              Запросы берутся из конфигурации (можно редактировать по продукту и типу).
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="field">
+          <span class="label">Показатели</span>
+          <div class="kpis">
+            <div class="kpi">
+              <div class="kpiLabel">Сумма</div>
+              <div id="kpiTotal" class="kpiValue">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpiLabel">Среднее</div>
+              <div id="kpiAvg" class="kpiValue">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpiLabel">Тренд</div>
+              <div id="kpiTrend" class="kpiValue">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <details class="tech">
+          <summary>Технические настройки</summary>
+          <label class="field">
+            <span class="label">Режим данных</span>
+            <select id="dataMode">
+              <option value="mock">Mock (демо без API)</option>
+              <option value="api">API (через fetchWordstat)</option>
+            </select>
+            <div class="hint">
+              Mock удобен для вёрстки и UI. Для реальных данных включи API и пропиши fetchWordstat().
+            </div>
+          </label>
+        </details>
+      </section>
+
+      <section class="content card">
+        <div class="contentHeader">
+          <div>
+            <h2 id="chartTitle">График</h2>
+            <div id="chartSubtitle" class="subtitleSmall">—</div>
+          </div>
+          <div class="legend" id="legend"></div>
+        </div>
+
+        <div class="chartWrap">
+          <canvas id="chartCanvas" width="1200" height="520"></canvas>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="tableHeader">
+          <h3>Данные</h3>
+          <button id="exportCsvBtn" class="btn secondary">Экспорт CSV</button>
+        </div>
+
+        <div class="tableWrap">
+          <table id="dataTable">
+            <thead>
+              <tr>
+                <th>Дата</th>
+                <th>Значение</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Модалка редактирования запросов -->
+  <div id="modalBackdrop" class="modalBackdrop hidden" aria-hidden="true">
+    <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modalHeader">
+        <div>
+          <div id="modalTitle" class="modalTitle">Редактор запросов</div>
+          <div class="subtitleSmall" id="modalSubtitle">—</div>
+        </div>
+        <button id="modalCloseBtn" class="iconBtn" aria-label="Закрыть">✕</button>
+      </div>
+
+      <div class="modalBody">
+        <p class="hint">
+          Вводи по одному запросу на строку. Эти данные сохраняются в браузере (localStorage).
+        </p>
+        <textarea id="queriesTextarea" spellcheck="false" placeholder="Пример:
+яндекс такси
+заказать такси
+такси онлайн"></textarea>
+      </div>
+
+      <div class="modalFooter">
+        <button id="modalResetBtn" class="btn secondary">Сбросить к дефолту</button>
+        <div class="spacer"></div>
+        <button id="modalSaveBtn" class="btn primary">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
