@@ -1152,11 +1152,17 @@ async function run() {
   setStatus("busy", "Загружаю данные…");
 
   try {
-    const mode = dataModeSelect.value;
-    const series =
-      mode === "mock"
-        ? await mockFetch(queries, from, to, selectedGranularity)
-        : await fetchWordstat(queries, from, to, selectedGranularity);
+ const mode = dataModeSelect.value;
+
+// если мок запрещён — не даём выбрать/использовать
+if (mode === "mock" && !SHOW_MOCK) {
+  throw new Error("Mock mode is disabled on this server.");
+}
+
+const series =
+  mode === "mock"
+    ? await mockFetch(queries, from, to, selectedGranularity)
+    : await fetchWordstat(queries, from, to, selectedGranularity);
 
     lastSeries = series;
 
