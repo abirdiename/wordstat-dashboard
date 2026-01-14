@@ -1160,6 +1160,7 @@ async function run() {
 
     lastSeries = series;
 
+    
     setStatus("ok", "Готово");
     renderLegend([{ name: "Суммарно по запросам" }]);
     drawChart(series);

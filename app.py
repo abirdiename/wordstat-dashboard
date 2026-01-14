@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import os
 from dotenv import load_dotenv
+
 load_dotenv()
 import requests
 from datetime import datetime, timedelta, date
