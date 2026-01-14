@@ -919,8 +919,7 @@ brand:["драйв для бизнеса",
 "яндекс драйв лизинг", 
 "яндекс драйв личный кабинет корпоративным клиентам", 
 "яндекс каршеринг для юридических лиц"
-]
-}}
+]}}
 function isoDate(d) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
