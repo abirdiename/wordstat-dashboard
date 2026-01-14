@@ -206,5 +206,5 @@ if __name__ == "__main__":
 from flask import send_from_directory
 
 @app.get("/")
-def home():
+def home2():
     return send_from_directory(".", "index.html")
