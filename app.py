@@ -1,5 +1,3 @@
-import os
-SHOW_MOCK = os.getenv("SHOW_MOCK", "0") == "1"
 from flask import Flask, request, jsonify
 import os
 from dotenv import load_dotenv
@@ -206,9 +204,3 @@ if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3001, debug=True)
 
 from flask import send_from_directory
-
-@app.get("/api/config")
-def get_config():
-    return {
-        "showMock": SHOW_MOCK
-    }
