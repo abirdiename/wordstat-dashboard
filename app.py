@@ -205,6 +205,6 @@ if __name__ == "__main__":
 
 from flask import send_from_directory
 
-@app.get("/health")
-def home():
-    return send_from_directory(".", "index.html")
+
+
+
