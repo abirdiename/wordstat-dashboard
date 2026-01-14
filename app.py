@@ -201,7 +201,7 @@ def wordstat_proxy():
 
 if __name__ == "__main__":
     # host=127.0.0.1 чтобы работало локально, порт 3001 как в твоём script.js
-    app.run(host="127.0.0.1", port=3001, debug=True)
+    app.run(host="0.0.0.0", port=3001, debug=True)
 
 from flask import send_from_directory
 
