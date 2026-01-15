@@ -22,7 +22,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=BASE_DIR, static_url_path="")
 # ------------------- SQLITE CACHE (SAFE) -------------------
 CACHE_ENABLED = True  # если что-то пойдёт не так — поставь False и всё будет как раньше
-CACHE_TTL_SECONDS = 24 * 60 * 60  # 24 часа
+CACHE_TTL_SECONDS = 7 * 24 * 60 * 60  # 7 дней
+RECENT_REFRESH_SECONDS = 24 * 60 * 60  # 24 часа
 CACHE_DB_PATH = str(Path(__file__).with_name("cache.sqlite3"))
 # Для "дотекающих" данных: если диапазон включает последние дни,
 # то считаем кэш устаревшим и пересчитываем раз в 24 часа.
