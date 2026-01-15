@@ -1301,7 +1301,7 @@ function drawChart(series) {
     return;
   }
 
-  const padding = { left: 70, right: 24, top: 24, bottom: 60 };
+  const padding = { left: 70, right: 60, top: 24, bottom: 60 };
   const w = canvas.width - padding.left - padding.right;
   const h = canvas.height - padding.top - padding.bottom;
 
@@ -1355,15 +1355,25 @@ function drawChart(series) {
   ctx.fillStyle = "#0f172a";
   ctx.globalAlpha = 0.75;
   ctx.font = "13px system-ui, -apple-system, Segoe UI, Roboto, Arial";
-  ctx.textAlign = "center";
 
+  const yLabel = padding.top + h + 34;
   const step = Math.ceil(series.length / 8);
+
   for (let i = 0; i < series.length; i += step) {
     const x = xFor(i);
-    ctx.fillText(series[i].date, x, padding.top + h + 34);
+
+    if (i === 0) ctx.textAlign = "left";
+    else if (i >= series.length - 1) ctx.textAlign = "right";
+    else ctx.textAlign = "center";
+
+    ctx.fillText(formatTickLabel(series[i].date), x, yLabel);
   }
-  // последняя
-  ctx.fillText(series[series.length - 1].date, xFor(series.length - 1), padding.top + h + 34);
+
+  // последняя (если вдруг step её пропустил)
+  const lastI = series.length - 1;
+  ctx.textAlign = "right";
+  ctx.fillText(formatTickLabel(series[lastI].date), xFor(lastI), yLabel);
+
   ctx.restore();
 }
 
@@ -1475,6 +1485,16 @@ function csvEscape(s) {
 
 function formatNum(n) {
   return new Intl.NumberFormat("ru-RU").format(n);
+}
+
+function formatTickLabel(s) {
+  // "2026-01-15" -> "15.01"
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s.slice(8,10)}.${s.slice(5,7)}`;
+  // "2026-01" -> "01.2026"
+  if (/^\d{4}-\d{2}$/.test(s)) return `${s.slice(5,7)}.${s.slice(0,4)}`;
+  // "2026-W03" -> "W03"
+  if (/^\d{4}-W\d{2}$/.test(s)) return s.slice(5);
+  return s;
 }
 
 function escapeHtml(s) {
