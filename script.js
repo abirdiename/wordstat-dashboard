@@ -1560,7 +1560,7 @@ async function run() {
  * Где value — суммарная частота по выбранному списку запросов.
  */
 async function fetchWordstat(queries, from, to, granularity) {
-  const res = await fetch("/api/wordstat", {
+  const res = await fetch(`${API_BASE}/api/wordstat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ queries, from, to, granularity })
@@ -1745,13 +1745,17 @@ function drawChart(series) {
     else if (i >= series.length - 1) ctx.textAlign = "right";
     else ctx.textAlign = "center";
 
-    ctx.fillText(formatTickLabel(series[i].date), x, yLabel);
+    ctx.fillText(formatTickLabel(series[i].date, selectedGranularity), x, yLabel);
   }
 
   // последняя (если вдруг step её пропустил)
   const lastI = series.length - 1;
-  ctx.textAlign = "right";
-  ctx.fillText(formatTickLabel(series[lastI].date), xFor(lastI), yLabel);
+ctx.textAlign = "right";
+ctx.fillText(
+  formatTickLabel(series[lastI].date, selectedGranularity),
+  xFor(lastI),
+  yLabel
+);
 
   ctx.restore();
 }
@@ -1811,7 +1815,7 @@ function fillTable(series) {
   tableBody.innerHTML = "";
   for (const p of series) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${escapeHtml(p.date)}</td><td>${formatNum(p.value)}</td>`;
+    tr.innerHTML = `<td>${escapeHtml(formatTickLabel(p.date, selectedGranularity))}</td><td>${formatNum(p.value)}</td>`;
     tableBody.appendChild(tr);
   }
 }
@@ -1866,13 +1870,33 @@ function formatNum(n) {
   return new Intl.NumberFormat("ru-RU").format(n);
 }
 
-function formatTickLabel(s) {
-  // "2026-01-15" -> "15.01"
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s.slice(8,10)}.${s.slice(5,7)}`;
-  // "2026-01" -> "01.2026"
-  if (/^\d{4}-\d{2}$/.test(s)) return `${s.slice(5,7)}.${s.slice(0,4)}`;
-  // "2026-W03" -> "W03"
+function isoWeekNumber(d) {
+  // d: Date
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+  return { year: date.getUTCFullYear(), week: weekNo };
+}
+
+function formatTickLabel(s, granularity) {
+  // день: "2026-01-15" -> "15.01"
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    if (granularity === "week") {
+      const d = new Date(s + "T00:00:00");
+      const { week } = isoWeekNumber(d);
+      return `W${String(week).padStart(2, "0")}`;
+    }
+    return `${s.slice(8, 10)}.${s.slice(5, 7)}`;
+  }
+
+  // месяц: "2026-01" -> "01.2026"
+  if (/^\d{4}-\d{2}$/.test(s)) return `${s.slice(5, 7)}.${s.slice(0, 4)}`;
+
+  // уже ISO week: "2026-W03" -> "W03"
   if (/^\d{4}-W\d{2}$/.test(s)) return s.slice(5);
+
   return s;
 }
 
