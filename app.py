@@ -24,11 +24,16 @@ app = Flask(__name__, static_folder=BASE_DIR, static_url_path="")
 CACHE_ENABLED = True  # если что-то пойдёт не так — поставь False и всё будет как раньше
 CACHE_TTL_SECONDS = 24 * 60 * 60  # 24 часа
 CACHE_DB_PATH = str(Path(__file__).with_name("cache.sqlite3"))
+# Для "дотекающих" данных: если диапазон включает последние дни,
+# то считаем кэш устаревшим и пересчитываем раз в 24 часа.
+RECENT_DAYS = 3
+RECENT_REFRESH_SECONDS = 24 * 60 * 60
+
 
 
 def _db_connect():
     # timeout важен, чтобы не падать при параллельных запросах
-    conn = sqlite3.connect(CACHE_DB_PATH, timeout=10)
+    conn = sqlite3.connect(CACHE_DB_PATH, timeout=10) 
     conn.row_factory = sqlite3.Row
     # WAL помогает при нескольких процессах gunicorn
     conn.execute("PRAGMA journal_mode=WAL;")
@@ -59,8 +64,14 @@ def cache_make_key(payload: dict) -> str:
     normalized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
+def _touches_recent_days(to_d: date) -> bool:
+    # Если конец диапазона попадает на последние RECENT_DAYS дней,
+    # значит данные могут "дотекать"
+    return to_d >= (date.today() - timedelta(days=RECENT_DAYS - 1))
 
-def cache_get(key: str):
+
+
+def cache_get(key: str, to_d: date | None = None):
     now = int(time.time())
     conn = _db_connect()
     row = conn.execute("SELECT created_at, response_json FROM cache WHERE key=?", (key,)).fetchone()
@@ -70,9 +81,15 @@ def cache_get(key: str):
         return None
 
     created_at = int(row["created_at"])
+
+    # 1) общий TTL
     if now - created_at > CACHE_TTL_SECONDS:
-        # протухло — считаем как нет
         return None
+
+    # 2) спец-правило для последних RECENT_DAYS: обновляем раз в 24 часа
+    if to_d is not None and _touches_recent_days(to_d):
+        if now - created_at > RECENT_REFRESH_SECONDS:
+            return None
 
     try:
         return json.loads(row["response_json"])
@@ -264,7 +281,7 @@ def wordstat_proxy():
             "to": to_api,
         }
         cache_key = cache_make_key(cache_payload)
-        cached = cache_get(cache_key)
+        cached = cache_get(cache_key, to_d=to_d)
         if cached is not None:
             resp = jsonify(cached)
             resp.headers["X-Cache"] = "HIT"
