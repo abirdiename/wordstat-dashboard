@@ -49,15 +49,11 @@ body{
   align-items: center;
   gap: 12px;
 }
-.logo{
-  width: 12px;
-  height: 12px;
-  border-radius: 14px;
-  display: grid;
-  place-items: center;
-  font-weight: 800;
-  color: white;
-  background: linear-gradient(135deg, var(--blue), #7c3aed);
+.logo-img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  display: block;
 }
 .title{
   font-weight: 800;
