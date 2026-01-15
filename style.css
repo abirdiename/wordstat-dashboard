@@ -50,8 +50,8 @@ body{
   gap: 12px;
 }
 .logo{
-  width: 42px;
-  height: 42px;
+  width: 12px;
+  height: 12px;
   border-radius: 14px;
   display: grid;
   place-items: center;
