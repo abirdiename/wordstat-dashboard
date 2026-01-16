@@ -382,7 +382,7 @@ function isoDate(d) {
 // ------------------- localStorage ключи -------------------
 const LS_QUERY_CONFIG = "wordstat_query_config_v1";
 // Адрес твоего Flask-сервера (app.py). Если он на другом порту — поменяй.
-const API_BASE = "http://127.0.0.1:3001";
+const API_BASE = "http://127.0.0.1:3002";
 
 // ------------------- DOM -------------------
 const productSelect = document.getElementById("productSelect");
