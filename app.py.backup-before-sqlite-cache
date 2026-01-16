@@ -10,109 +10,9 @@ import calendar
 import os
 from flask import Flask, send_from_directory, request, jsonify
 
-import sqlite3
-import hashlib
-import json
-import time
-from pathlib import Path
-
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 app = Flask(__name__, static_folder=BASE_DIR, static_url_path="")
-# ------------------- SQLITE CACHE (SAFE) -------------------
-CACHE_ENABLED = True  # если что-то пойдёт не так — поставь False и всё будет как раньше
-CACHE_TTL_SECONDS = 7 * 24 * 60 * 60  # 7 дней
-RECENT_REFRESH_SECONDS = 24 * 60 * 60  # 24 часа
-CACHE_DB_PATH = str(Path(__file__).with_name("cache.sqlite3"))
-# Для "дотекающих" данных: если диапазон включает последние дни,
-# то считаем кэш устаревшим и пересчитываем раз в 24 часа.
-RECENT_DAYS = 3
-RECENT_REFRESH_SECONDS = 24 * 60 * 60
-
-
-
-def _db_connect():
-    # timeout важен, чтобы не падать при параллельных запросах
-    conn = sqlite3.connect(CACHE_DB_PATH, timeout=10) 
-    conn.row_factory = sqlite3.Row
-    # WAL помогает при нескольких процессах gunicorn
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
-    return conn
-
-
-def cache_init():
-    conn = _db_connect()
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS cache (
-            key TEXT PRIMARY KEY,
-            created_at INTEGER NOT NULL,
-            response_json TEXT NOT NULL
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
-
-
-def cache_make_key(payload: dict) -> str:
-    """
-    Делаем хэш из всего payload запроса, чтобы кэш был корректным.
-    Важно: сортируем ключи, чтобы одинаковые запросы давали один ключ.
-    """
-    normalized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-def _touches_recent_days(to_d: date) -> bool:
-    # Если конец диапазона попадает на последние RECENT_DAYS дней,
-    # значит данные могут "дотекать"
-    return to_d >= (date.today() - timedelta(days=RECENT_DAYS - 1))
-
-
-
-def cache_get(key: str, to_d: date | None = None):
-    now = int(time.time())
-    conn = _db_connect()
-    row = conn.execute("SELECT created_at, response_json FROM cache WHERE key=?", (key,)).fetchone()
-    conn.close()
-
-    if not row:
-        return None
-
-    created_at = int(row["created_at"])
-
-    # 1) общий TTL
-    if now - created_at > CACHE_TTL_SECONDS:
-        return None
-
-    # 2) спец-правило для последних RECENT_DAYS: обновляем раз в 24 часа
-    if to_d is not None and _touches_recent_days(to_d):
-        if now - created_at > RECENT_REFRESH_SECONDS:
-            return None
-
-    try:
-        return json.loads(row["response_json"])
-    except Exception:
-        return None
-
-
-def cache_set(key: str, data):
-    now = int(time.time())
-    conn = _db_connect()
-    conn.execute(
-        "INSERT OR REPLACE INTO cache(key, created_at, response_json) VALUES(?, ?, ?)",
-        (key, now, json.dumps(data, ensure_ascii=False)),
-    )
-    conn.commit()
-    conn.close()
-
-
-# инициализируем БД при старте приложения
-cache_init()
-# ------------------- /SQLITE CACHE -------------------
-
 from flask import send_from_directory
 
 @app.get("/")
@@ -271,24 +171,6 @@ def wordstat_proxy():
     from_api = fmt_ymd(from_d)
     to_api = fmt_ymd(to_d)
 
-    # ------------------- CACHE CHECK (AFTER CLAMP) -------------------
-    # Ключ строим из фактических параметров, которые реально уйдут в Wordstat
-    cache_key = None
-    if CACHE_ENABLED:
-        cache_payload = {
-            "queries": [str(q) for q in queries],  # как пришло (фронт)
-            "period": period,
-            "from": from_api,
-            "to": to_api,
-        }
-        cache_key = cache_make_key(cache_payload)
-        cached = cache_get(cache_key, to_d=to_d)
-        if cached is not None:
-            resp = jsonify(cached)
-            resp.headers["X-Cache"] = "HIT"
-            return resp
-    # ------------------- /CACHE CHECK -------------------
-
     summed = {}  # date -> value
 
     try:
@@ -311,22 +193,15 @@ def wordstat_proxy():
                     summed[d] = summed.get(d, 0) + c
 
         out = [{"date": d, "value": summed[d]} for d in sorted(summed.keys())]
-
-        # ------------------- CACHE SAVE -------------------
-        if CACHE_ENABLED and cache_key:
-            cache_set(cache_key, out)
-        # ------------------- /CACHE SAVE ------------------
-
-        resp = jsonify(out)
-        resp.headers["X-Cache"] = "MISS"
-        return resp
+        return jsonify(out)
 
     except Exception as e:
         # Важно: отдаём текст ошибки в ответ, чтобы было понятно, что сломалось
         return jsonify({"error": str(e)}), 502
 
 
-
 if __name__ == "__main__":
     # host=127.0.0.1 чтобы работало локально, порт 3001 как в твоём script.js
-    app.run(host="0.0.0.0", port=3002, debug=True)
+    app.run(host="0.0.0.0", port=3001, debug=True)
+
+from flask import send_from_directory
