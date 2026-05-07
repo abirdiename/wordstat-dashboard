@@ -121,8 +121,9 @@ def home():
 
 
 # ========== НАСТРОЙКИ ==========
-WORDSTAT_BASE_URL = "https://api.wordstat.yandex.net"
-WORDSTAT_TOKEN = os.getenv("WORDSTAT_TOKEN", "").strip()
+WORDSTAT_BASE_URL = "https://searchapi.api.cloud.yandex.net"
+YANDEX_API_KEY = os.getenv("YANDEX_API_KEY", "").strip()      # API-ключ из Яндекс.Облака
+YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID", "").strip()  # ID каталога из Яндекс.Облака
 
 
 # ========== ЛОГИ (чтобы видеть запросы) ==========
@@ -210,23 +211,41 @@ def normalize_phrase_for_dynamics(phrase: str) -> str:
 
 
 def call_wordstat_dynamics(phrase: str, period: str, from_date: str, to_date: str):
-    url = f"{WORDSTAT_BASE_URL}/v1/dynamics"
+    # Новый эндпоинт для динамики
+    url = f"{WORDSTAT_BASE_URL}/v2/wordstat/statistics"  # или /v2/wordstat/topRequests — уточните в документации
+    
     headers = {
-        "Content-type": "application/json;charset=utf-8",
-        "Authorization": f"Bearer {WORDSTAT_TOKEN}",
+        "Authorization": f"Api-Key {YANDEX_API_KEY}",
+        "Content-Type": "application/json"
     }
+    
+    # ВНИМАНИЕ: новый API принимает параметры по-другому
+    # Это примерный формат — сверьте с документацией Яндекс.Облака
     payload = {
-        "phrase": phrase,
-        "period": period,
-        "fromDate": from_date,
-        "toDate": to_date,
+        "folderId": YANDEX_FOLDER_ID,
+        "texts": [phrase],                    # массив фраз
+        "timeRange": {
+            "from": from_date.replace("-", ""),  # часто нужен формат YYYYMMDD
+            "to": to_date.replace("-", "")       # а не YYYY-MM-DD
+        },
+        "granularity": period.upper()            # daily/weekly/monthly
     }
 
     r = requests.post(url, json=payload, headers=headers, timeout=30)
+    
     if r.status_code != 200:
         raise RuntimeError(f"Wordstat error {r.status_code}: {r.text}")
-
-    return r.json()
+    
+    # Формат ответа тоже изменился — нужно будет переделать парсинг
+    # (см. следующий пункт)
+    result = r.json()
+    
+    # Трансформируем старый формат в новый для обратной совместимости
+    transformed = {"dynamics": []}
+    # Здесь понадобится адаптация под реальный ответ нового API
+    # Пока заглушка — подробнее в инструкции
+    
+    return transformed
 
 
 # ========== РОУТЫ ==========
@@ -304,11 +323,16 @@ def wordstat_proxy():
                 to_date=to_api,
             )
 
-            for p in ws.get("dynamics", []):
-                d = p.get("date")
-                c = int(p.get("count") or 0)
-                if d:
-                    summed[d] = summed.get(d, 0) + c
+# Новый API возвращает данные в формате:
+# {"result": [{"text": "фраза", "data": [{"date": "20250101", "value": 123}]}]}
+for item in ws.get("result", []):
+    for point in item.get("data", []):
+        d_str = point.get("date")  # формат YYYYMMDD
+        # Преобразуем в YYYY-MM-DD
+        d = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:8]}"
+        c = int(point.get("value") or 0)
+        if d:
+            summed[d] = summed.get(d, 0) + c
 
         out = [{"date": d, "value": summed[d]} for d in sorted(summed.keys())]
 
