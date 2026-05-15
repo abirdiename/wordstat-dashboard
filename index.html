@@ -4,20 +4,19 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>B2B Wordstat Trends Dashboard</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=20260515" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <div class="app">
     <header class="topbar">
       <div class="brand">
-      <img src="Go Logo.png" class="logo-img" alt="Logo">
+        <img src="Go Logo.png" class="logo-img" alt="Logo">
         <div>
           <div class="title">B2B Wordstat Trends</div>
           <div class="subtitle">Динамика запросов по продуктам</div>
         </div>
       </div>
-
-      
       <div class="status">
         <span id="statusDot" class="dot idle"></span>
         <span id="statusText" class="statusText">Готово</span>
@@ -29,24 +28,25 @@
         <h2>Фильтры</h2>
 
         <div class="grid">
-          <label class="field">
-            <span class="label">Продукт</span>
-            <select id="productSelect"></select>
-          </label>
+          <div class="field">
+            <span class="label">Продукты</span>
+            <div id="productChecks" class="checks"></div>
+          </div>
 
-          <label class="field">
+          <div class="field">
             <span class="label">Тип запросов</span>
-            <div class="segmented" id="typeSegment">
-              <button class="seg active" data-type="brand">Бренд</button>
-              <button class="seg" data-type="generic">Дженерик</button>
+            <div class="checks" id="typeChecks">
+              <label class="check"><input type="checkbox" value="brand" checked> Бренд</label>
+              <label class="check"><input type="checkbox" value="generic" checked> Дженерик</label>
+              <label class="check"><input type="checkbox" value="competitors"> Конкуренты</label>
             </div>
-          </label>
+          </div>
 
           <label class="field">
             <span class="label">Агрегация</span>
             <div class="segmented" id="granularitySegment">
-              <button class="seg active" data-granularity="day">День</button>
-              <button class="seg" data-granularity="week">Неделя</button>
+              <button class="seg" data-granularity="day">День</button>
+              <button class="seg active" data-granularity="week">Неделя</button>
               <button class="seg" data-granularity="month">Месяц</button>
               <button class="seg" data-granularity="year">Год</button>
             </div>
@@ -62,13 +62,12 @@
           </label>
 
           <div class="field">
-            <span class="label">Запросы (редактор)</span>
             <div class="actionsRow">
               <button id="editQueriesBtn" class="btn secondary">Редактировать список</button>
               <button id="runBtn" class="btn primary">Построить</button>
             </div>
             <div class="hint">
-              Запросы берутся из конфигурации (можно редактировать по продукту и типу).
+              Каждая комбинация «продукт × тип» — отдельная линия на графике.
             </div>
           </div>
         </div>
@@ -92,35 +91,18 @@
             </div>
           </div>
         </div>
-
-        <div class="divider"></div>
-
-        <details class="tech">
-          <summary>Технические настройки</summary>
-          <label class="field">
-            <span class="label">Режим данных</span>
-            <select id="dataMode">
-              <option value="api" selected>API</option>
-              <option value="mock">Mock</option>
-            </select>
-            <div class="hint">
-              Mock удобен для вёрстки и UI. Для реальных данных включи API и пропиши fetchWordstat().
-            </div>
-          </label>
-        </details>
       </section>
 
       <section class="content card">
         <div class="contentHeader">
           <div>
             <h2 id="chartTitle">График</h2>
-            <div id="chartSubtitle" class="subtitleSmall">—</div>
+            <div id="chartSubtitle" class="subtitleSmall">Выбери фильтры и нажми «Построить»</div>
           </div>
-          <div class="legend" id="legend"></div>
         </div>
 
-        <div class="chartWrap">
-          <canvas id="chartCanvas" width="1200" height="520"></canvas>
+        <div class="chartWrap" style="padding:8px">
+          <canvas id="chartCanvas" height="120"></canvas>
         </div>
 
         <div class="divider"></div>
@@ -132,12 +114,7 @@
 
         <div class="tableWrap">
           <table id="dataTable">
-            <thead>
-              <tr>
-                <th>Дата</th>
-                <th>Значение</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Дата</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -157,13 +134,24 @@
       </div>
 
       <div class="modalBody">
+        <div class="modalSelects">
+          <label class="field">
+            <span class="label">Продукт</span>
+            <select id="editProductSelect"></select>
+          </label>
+          <label class="field">
+            <span class="label">Тип</span>
+            <select id="editTypeSelect">
+              <option value="brand">Бренд</option>
+              <option value="generic">Дженерик</option>
+              <option value="competitors">Конкуренты</option>
+            </select>
+          </label>
+        </div>
         <p class="hint">
-          Вводи по одному запросу на строку. Эти данные сохраняются в браузере (localStorage).
+          По одному запросу на строку. Сохраняется в браузере (localStorage).
         </p>
-        <textarea id="queriesTextarea" spellcheck="false" placeholder="Пример:
-яндекс такси
-заказать такси
-такси онлайн"></textarea>
+        <textarea id="queriesTextarea" spellcheck="false" placeholder="яндекс такси&#10;заказать такси"></textarea>
       </div>
 
       <div class="modalFooter">
@@ -174,6 +162,6 @@
     </div>
   </div>
 
-  <script src="script.js?v=20260114"></script>
+  <script src="script.js?v=20260515"></script>
 </body>
 </html>

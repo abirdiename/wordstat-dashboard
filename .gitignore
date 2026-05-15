@@ -1,6 +1,40 @@
+# Env / secrets
 .env
 .env.*
+!.env.example
+
+# Python
 .venv/
+venv/
 __pycache__/
 *.pyc
+*.pyo
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# SQLite cache (генерируется на месте)
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
+
+# Backups / temp
+*.backup
+*.backup-*
+*.save
+*.bak
+*.tmp
+*.orig
+
+# Editor
+.idea/
+.vscode/
+
+# SSL certs
+certbot/
+nginx/certs/

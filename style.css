@@ -336,6 +336,43 @@ tbody tr:hover{
   margin-top: 10px;
 }
 
+.checks{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: white;
+}
+.check{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+.check input[type="checkbox"]{
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--blue);
+}
+#typeChecks{
+  flex-direction: row;
+  gap: 14px;
+  max-height: none;
+}
+.modalSelects{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
 /* --------- Модалка --------- */
 .modalBackdrop{
   position: fixed;

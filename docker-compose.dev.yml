@@ -1,0 +1,16 @@
+# Локальная разработка — без nginx и certbot, порт наружу.
+# Запуск:  docker compose -f docker-compose.dev.yml up --build
+services:
+  app:
+    build: .
+    container_name: wordstat-app-dev
+    env_file: .env
+    volumes:
+      - ./:/app
+      - cache-data-dev:/app/data
+    ports:
+      - "3001:3001"
+    command: gunicorn -w 1 -b 0.0.0.0:3001 --reload --access-logfile - app:app
+
+volumes:
+  cache-data-dev:

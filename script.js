@@ -373,121 +373,142 @@ generic: ["карта на азс",
 "топливо для ип",
 "топливо для юр лиц",
 "топливо для юридических лиц"]
-}}
-function isoDate(d) {
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
+}};
 
-// ------------------- localStorage ключи -------------------
-const LS_QUERY_CONFIG = "wordstat_query_config_v1";
-// Адрес твоего Flask-сервера (app.py). Если он на другом порту — поменяй.
-const API_BASE = "http://127.0.0.1:3002";
+// ============================================================
+//  Wordstat Trends — фронт
+//  Chart.js, мульти-серии (Продукт × Тип)
+// ============================================================
 
-// ------------------- DOM -------------------
-const productSelect = document.getElementById("productSelect");
-const typeSegment = document.getElementById("typeSegment");
-const granularitySegment = document.getElementById("granularitySegment");
-const dateFrom = document.getElementById("dateFrom");
-const dateTo = document.getElementById("dateTo");
-const runBtn = document.getElementById("runBtn");
-const editQueriesBtn = document.getElementById("editQueriesBtn");
-const dataModeSelect = document.getElementById("dataMode");
+const LS_QUERY_CONFIG = "wordstat_query_config_v2";
+const LS_FILTERS      = "wordstat_filters_v1";
 
-const statusDot = document.getElementById("statusDot");
-const statusText = document.getElementById("statusText");
+const TYPE_LABEL = { brand: "Бренд", generic: "Дженерик", competitors: "Конкуренты" };
 
-const chartTitle = document.getElementById("chartTitle");
-const chartSubtitle = document.getElementById("chartSubtitle");
-const legendEl = document.getElementById("legend");
+const PALETTE = [
+  "#2563eb", "#ef4444", "#10b981", "#f59e0b", "#7c3aed",
+  "#0ea5e9", "#ec4899", "#84cc16", "#64748b", "#dc2626",
+  "#14b8a6", "#a855f7",
+];
 
-const kpiTotal = document.getElementById("kpiTotal");
-const kpiAvg = document.getElementById("kpiAvg");
-const kpiTrend = document.getElementById("kpiTrend");
-
-const canvas = document.getElementById("chartCanvas");
-const ctx = canvas.getContext("2d");
-
+const $ = (id) => document.getElementById(id);
+const statusDot = $("statusDot");
+const statusText = $("statusText");
+const productChecks = $("productChecks");
+const typeChecks = $("typeChecks");
+const granularitySegment = $("granularitySegment");
+const dateFrom = $("dateFrom");
+const dateTo = $("dateTo");
+const runBtn = $("runBtn");
+const editQueriesBtn = $("editQueriesBtn");
+const chartTitle = $("chartTitle");
+const chartSubtitle = $("chartSubtitle");
+const kpiTotal = $("kpiTotal");
+const kpiAvg = $("kpiAvg");
+const kpiTrend = $("kpiTrend");
+const canvas = $("chartCanvas");
+const tableHead = document.querySelector("#dataTable thead");
 const tableBody = document.querySelector("#dataTable tbody");
-const exportCsvBtn = document.getElementById("exportCsvBtn");
+const exportCsvBtn = $("exportCsvBtn");
 
-// Модалка
-const modalBackdrop = document.getElementById("modalBackdrop");
-const modalCloseBtn = document.getElementById("modalCloseBtn");
-const modalSaveBtn = document.getElementById("modalSaveBtn");
-const modalResetBtn = document.getElementById("modalResetBtn");
-const queriesTextarea = document.getElementById("queriesTextarea");
-const modalSubtitle = document.getElementById("modalSubtitle");
+const modalBackdrop = $("modalBackdrop");
+const modalCloseBtn = $("modalCloseBtn");
+const modalSaveBtn = $("modalSaveBtn");
+const modalResetBtn = $("modalResetBtn");
+const queriesTextarea = $("queriesTextarea");
+const modalSubtitle = $("modalSubtitle");
+const editProductSelect = $("editProductSelect");
+const editTypeSelect = $("editTypeSelect");
 
-// ------------------- STATE -------------------
 let queryConfig = loadQueryConfig();
-let selectedType = "brand";
-let selectedGranularity = "day";
-let lastSeries = []; // [{date,value}]
+let selectedGranularity = "week";
+let chart = null;
+let lastResponse = null;
 
-// ------------------- INIT -------------------
 init();
 
 function init() {
-  // Заполняем продукты
-  const products = Object.keys(queryConfig);
-  for (const p of products) {
-    const opt = document.createElement("option");
-    opt.value = p;
-    opt.textContent = p;
-    productSelect.appendChild(opt);
-  }
-
-  // Даты по умолчанию: последние 30 дней
-  const now = new Date();
-  const start = new Date(now);
-  start.setDate(now.getDate() - 30);
-
-  dateFrom.value = isoDate(start);
-  dateTo.value = isoDate(now);
-
-  // События
-  typeSegment.addEventListener("click", (e) => {
-    const btn = e.target.closest(".seg");
-    if (!btn) return;
-    selectedType = btn.dataset.type;
-    setActiveSegment(typeSegment, btn);
-    updateSubtitle();
-  });
+  renderProductChecks();
+  renderEditProductOptions();
+  restoreFilters();
 
   granularitySegment.addEventListener("click", (e) => {
     const btn = e.target.closest(".seg");
     if (!btn) return;
     selectedGranularity = btn.dataset.granularity;
     setActiveSegment(granularitySegment, btn);
-    updateSubtitle();
+    saveFilters();
   });
 
-  productSelect.addEventListener("change", () => {
-    updateSubtitle();
-  });
+  typeChecks.addEventListener("change", saveFilters);
+  productChecks.addEventListener("change", saveFilters);
+  dateFrom.addEventListener("change", saveFilters);
+  dateTo.addEventListener("change", saveFilters);
 
-  runBtn.addEventListener("click", async () => {
-    await run();
-  });
+  runBtn.addEventListener("click", run);
 
-  editQueriesBtn.addEventListener("click", () => openEditor());
-  modalCloseBtn.addEventListener("click", () => closeEditor());
+  editQueriesBtn.addEventListener("click", openEditor);
+  modalCloseBtn.addEventListener("click", closeEditor);
   modalBackdrop.addEventListener("click", (e) => {
     if (e.target === modalBackdrop) closeEditor();
   });
-  modalSaveBtn.addEventListener("click", () => saveEditor());
-  modalResetBtn.addEventListener("click", () => resetEditor());
+  modalSaveBtn.addEventListener("click", saveEditor);
+  modalResetBtn.addEventListener("click", resetEditor);
+  editProductSelect.addEventListener("change", loadEditorText);
+  editTypeSelect.addEventListener("change", loadEditorText);
 
-  exportCsvBtn.addEventListener("click", () => exportCSV());
+  exportCsvBtn.addEventListener("click", exportCSV);
 
-  // Первая отрисовка
-  updateSubtitle();
   setStatus("idle", "Готово");
   drawEmpty();
 }
 
-// ------------------- UI helpers -------------------
+function saveFilters() {
+  const state = {
+    products: getCheckedValues(productChecks),
+    types: getCheckedValues(typeChecks),
+    granularity: selectedGranularity,
+    from: dateFrom.value,
+    to: dateTo.value,
+  };
+  try { localStorage.setItem(LS_FILTERS, JSON.stringify(state)); } catch {}
+}
+
+function restoreFilters() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(LS_FILTERS) || "{}"); } catch {}
+
+  if (saved.from && saved.to) {
+    dateFrom.value = saved.from;
+    dateTo.value = saved.to;
+  } else {
+    const now = new Date();
+    const start = new Date(now);
+    start.setMonth(now.getMonth() - 3);
+    dateFrom.value = isoDate(start);
+    dateTo.value = isoDate(now);
+  }
+
+  if (saved.granularity) {
+    selectedGranularity = saved.granularity;
+    granularitySegment.querySelectorAll(".seg").forEach((b) => {
+      b.classList.toggle("active", b.dataset.granularity === selectedGranularity);
+    });
+  }
+
+  const products = Object.keys(queryConfig);
+  const checkedProducts = saved.products?.length ? saved.products : products.slice(0, 1);
+  productChecks.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+    cb.checked = checkedProducts.includes(cb.value);
+  });
+
+  if (saved.types?.length) {
+    typeChecks.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+      cb.checked = saved.types.includes(cb.value);
+    });
+  }
+}
+
 function setActiveSegment(container, activeBtn) {
   container.querySelectorAll(".seg").forEach((b) => b.classList.remove("active"));
   activeBtn.classList.add("active");
@@ -498,29 +519,45 @@ function setStatus(kind, text) {
   statusText.textContent = text;
 }
 
-function updateSubtitle() {
-  const product = productSelect.value || Object.keys(queryConfig)[0];
-  const queries = getQueries(product, selectedType);
-  chartTitle.textContent = `${product} • ${typeLabel(selectedType)}`;
-  chartSubtitle.textContent =
-    `${selectedGranularityLabel(selectedGranularity)} • ${queries.length} запрос(ов)`;
+function getCheckedValues(container) {
+  return [...container.querySelectorAll('input[type="checkbox"]:checked')].map((cb) => cb.value);
 }
 
-// ------------------- Конфиг запросов -------------------
+function renderProductChecks() {
+  productChecks.innerHTML = "";
+  for (const p of Object.keys(queryConfig)) {
+    const label = document.createElement("label");
+    label.className = "check";
+    label.innerHTML = `<input type="checkbox" value="${escapeAttr(p)}"> ${escapeHtml(p)}`;
+    productChecks.appendChild(label);
+  }
+}
+
+function renderEditProductOptions() {
+  editProductSelect.innerHTML = "";
+  for (const p of Object.keys(queryConfig)) {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = p;
+    editProductSelect.appendChild(opt);
+  }
+}
+
 function loadQueryConfig() {
   try {
     const raw = localStorage.getItem(LS_QUERY_CONFIG);
     if (!raw) return structuredClone(DEFAULT_QUERY_CONFIG);
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return structuredClone(DEFAULT_QUERY_CONFIG);
-
-    // Мягкая нормализация: если чего-то нет — подставим дефолты
-    const merged = structuredClone(DEFAULT_QUERY_CONFIG);
-    for (const product of Object.keys(parsed)) {
-      merged[product] = merged[product] || { brand: [], generic: [], competitors: [] };
-      for (const t of ["brand", "generic", "competitors"]) {
-        if (Array.isArray(parsed[product]?.[t])) merged[product][t] = parsed[product][t];
-      }
+    const merged = {};
+    for (const product of Object.keys({ ...DEFAULT_QUERY_CONFIG, ...parsed })) {
+      const base = DEFAULT_QUERY_CONFIG[product] || { brand: [], generic: [], competitors: [] };
+      const user = parsed[product] || {};
+      merged[product] = {
+        brand: Array.isArray(user.brand) ? user.brand : (base.brand || []),
+        generic: Array.isArray(user.generic) ? user.generic : (base.generic || []),
+        competitors: Array.isArray(user.competitors) ? user.competitors : (base.competitors || []),
+      };
     }
     return merged;
   } catch {
@@ -529,27 +566,21 @@ function loadQueryConfig() {
 }
 
 function saveQueryConfig() {
-  localStorage.setItem(LS_QUERY_CONFIG, JSON.stringify(queryConfig));
+  try { localStorage.setItem(LS_QUERY_CONFIG, JSON.stringify(queryConfig)); } catch {}
 }
 
 function getQueries(product, type) {
-  return (queryConfig?.[product]?.[type] ?? []).filter((s) => String(s).trim().length > 0);
+  return (queryConfig?.[product]?.[type] ?? [])
+    .filter((s) => s && String(s).trim().length > 0)
+    .map((s) => String(s).trim());
 }
 
-function typeLabel(type) {
-  return type === "brand" ? "Бренд" : type === "generic" ? "Дженерик" : "Конкуренты";
-}
-
-function selectedGranularityLabel(g) {
-  return g === "day" ? "По дням" : g === "week" ? "По неделям" : g === "month" ? "По месяцам" : "По годам";
-}
-
-// ------------------- Редактор запросов -------------------
 function openEditor() {
-  const product = productSelect.value;
-  const list = getQueries(product, selectedType);
-  queriesTextarea.value = list.join("\n");
-  modalSubtitle.textContent = `${product} • ${typeLabel(selectedType)}`;
+  const checkedProducts = getCheckedValues(productChecks);
+  if (checkedProducts[0]) editProductSelect.value = checkedProducts[0];
+  const checkedTypes = getCheckedValues(typeChecks);
+  if (checkedTypes[0]) editTypeSelect.value = checkedTypes[0];
+  loadEditorText();
   modalBackdrop.classList.remove("hidden");
   modalBackdrop.setAttribute("aria-hidden", "false");
   queriesTextarea.focus();
@@ -560,376 +591,223 @@ function closeEditor() {
   modalBackdrop.setAttribute("aria-hidden", "true");
 }
 
+function loadEditorText() {
+  const product = editProductSelect.value;
+  const type = editTypeSelect.value;
+  const list = getQueries(product, type);
+  queriesTextarea.value = list.join("\n");
+  modalSubtitle.textContent = `${product} • ${TYPE_LABEL[type]} • ${list.length} запрос(ов)`;
+}
+
 function saveEditor() {
-  const product = productSelect.value;
+  const product = editProductSelect.value;
+  const type = editTypeSelect.value;
   const lines = queriesTextarea.value
     .split("\n")
     .map((s) => s.trim())
     .filter(Boolean);
-
   queryConfig[product] = queryConfig[product] || { brand: [], generic: [], competitors: [] };
-  queryConfig[product][selectedType] = lines;
-
+  queryConfig[product][type] = lines;
   saveQueryConfig();
-  closeEditor();
-  updateSubtitle();
+  loadEditorText();
+  setStatus("ok", "Список сохранён");
 }
 
 function resetEditor() {
-  const product = productSelect.value;
   queryConfig = structuredClone(DEFAULT_QUERY_CONFIG);
   saveQueryConfig();
-  queriesTextarea.value = getQueries(product, selectedType).join("\n");
-  updateSubtitle();
+  renderProductChecks();
+  renderEditProductOptions();
+  loadEditorText();
+  setStatus("ok", "Сброшено к дефолту");
 }
 
-// ------------------- Основной запуск -------------------
 async function run() {
-  const product = productSelect.value;
-  const queries = getQueries(product, selectedType);
-
-  if (!queries.length) {
-    setStatus("warn", "Нет запросов. Добавь их в редакторе.");
-    drawEmpty("Нет запросов для выбранного фильтра");
-    fillTable([]);
-    fillKPIs([]);
-    return;
-  }
-
+  const products = getCheckedValues(productChecks);
+  const types = getCheckedValues(typeChecks);
   const from = dateFrom.value;
   const to = dateTo.value;
-  if (!from || !to || from > to) {
-    setStatus("warn", "Проверь даты (from ≤ to)");
-    return;
+
+  if (!products.length) { setStatus("warn", "Выбери хотя бы один продукт"); return; }
+  if (!types.length)    { setStatus("warn", "Выбери хотя бы один тип запросов"); return; }
+  if (!from || !to || from > to) { setStatus("warn", "Проверь даты (from ≤ to)"); return; }
+
+  const series = [];
+  for (const product of products) {
+    for (const type of types) {
+      const queries = getQueries(product, type);
+      if (!queries.length) continue;
+      series.push({ name: `${product} — ${TYPE_LABEL[type]}`, queries });
+    }
   }
 
-  setStatus("busy", "Загружаю данные…");
+  if (!series.length) { setStatus("warn", "У выбранных комбинаций нет запросов"); return; }
+
+  setStatus("busy", `Загружаю ${series.length} серий…`);
+  chartSubtitle.textContent = `${series.length} серий • ${granularityLabel(selectedGranularity)}`;
 
   try {
-    const mode = dataModeSelect.value;
-    const series =
-      mode === "mock"
-        ? await mockFetch(queries, from, to, selectedGranularity)
-        : await fetchWordstat(queries, from, to, selectedGranularity);
+    const res = await fetch("/api/wordstat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ series, from, to, granularity: selectedGranularity }),
+    });
+    let data;
+    try { data = await res.json(); } catch { data = null; }
+    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    if (!data?.series) throw new Error("Неверный формат ответа");
 
-    lastSeries = series;
+    lastResponse = data;
+    const cacheTag = res.headers.get("X-Cache");
+    setStatus("ok", cacheTag === "HIT" ? "Готово (из кэша)" : "Готово");
 
-    
-    setStatus("ok", "Готово");
-    renderLegend([{ name: "Суммарно по запросам" }]);
-    drawChart(series);
-    fillTable(series);
-    fillKPIs(series);
+    renderChart(data.series);
+    renderTable(data.series);
+    renderKPIs(data.series);
   } catch (err) {
     console.error(err);
-    setStatus("error", "Ошибка загрузки");
+    setStatus("error", `Ошибка: ${err.message || err}`);
     drawEmpty("Не удалось получить данные");
-    fillTable([]);
-    fillKPIs([]);
+    renderTable([]);
+    renderKPIs([]);
   }
 }
 
-// ------------------- API: сюда подключишь Wordstat -------------------
-/**
- * ОЖИДАЕМЫЙ формат результата:
- * return [{ date: "YYYY-MM-DD"|"YYYY-W##"|"YYYY-MM"|"YYYY", value: number }, ...]
- *
- * Где value — суммарная частота по выбранному списку запросов.
- */
-async function fetchWordstat(queries, from, to, granularity) {
-  const res = await fetch("/api/wordstat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ queries, from, to, granularity })
-  });
-  
-  let data;
-  try {
-    data = await res.json();
-  } catch {
-    data = null;
-  }
-
-  if (!res.ok) {
-    const msg = data?.error || `HTTP ${res.status}`;
-    throw new Error(msg);
-  }
-
-  // ожидаем формат: [{date, value}, ...]
-  if (!Array.isArray(data)) {
-    throw new Error("Неверный формат ответа от сервера");
-  }
-
-  return data;
+function granularityLabel(g) {
+  return g === "day" ? "По дням" :
+         g === "week" ? "По неделям" :
+         g === "month" ? "По месяцам" : "По годам";
 }
 
-// ------------------- MOCK данные (для дизайна и логики) -------------------
-async function mockFetch(queries, from, to, granularity) {
-  // имитируем задержку сети
-  await sleep(350);
-
-  const points = buildDateAxis(from, to, granularity);
-  // генерим «правдоподобную» динамику
-  let base = 200 + queries.length * 120;
-  const series = points.map((d, i) => {
-    const wave = Math.sin(i / 2.6) * 0.12 + Math.sin(i / 7.5) * 0.08;
-    const noise = (Math.random() - 0.5) * 0.18;
-    const trend = i * (0.006 + queries.length * 0.0002);
-    const value = Math.max(0, Math.round(base * (1 + wave + noise) + base * trend));
-    return { date: d, value };
-  });
-
-  return series;
-}
-
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-// ------------------- Генерация оси дат -------------------
-function buildDateAxis(fromISO, toISO, granularity) {
-  const from = new Date(fromISO);
-  const to = new Date(toISO);
-
-  if (granularity === "day") {
-    const out = [];
-    const cur = new Date(from);
-    while (cur <= to) {
-      out.push(isoDate(cur));
-      cur.setDate(cur.getDate() + 1);
-    }
-    return out;
-  }
-
-  if (granularity === "week") {
-    // ISO week (упрощённо): считаем недели от даты from
-    const out = [];
-    const cur = new Date(from);
-    let idx = 1;
-    while (cur <= to) {
-      const y = cur.getFullYear();
-      out.push(`${y}-W${String(idx).padStart(2, "0")}`);
-      cur.setDate(cur.getDate() + 7);
-      idx++;
-      if (idx > 53) idx = 1;
-    }
-    return out;
-  }
-
-  if (granularity === "month") {
-    const out = [];
-    const cur = new Date(from.getFullYear(), from.getMonth(), 1);
-    const end = new Date(to.getFullYear(), to.getMonth(), 1);
-    while (cur <= end) {
-      out.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}`);
-      cur.setMonth(cur.getMonth() + 1);
-    }
-    return out;
-  }
-
-  // year
-  const out = [];
-  for (let y = from.getFullYear(); y <= to.getFullYear(); y++) {
-    out.push(String(y));
-  }
-  return out;
-}
-
-// ------------------- График (Canvas) -------------------
 function drawEmpty(text = "Выбери фильтры и нажми «Построить»") {
-  clearCanvas();
+  if (chart) { chart.destroy(); chart = null; }
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.save();
-  ctx.fillStyle = "#0f172a";
-  ctx.globalAlpha = 0.65;
-  ctx.font = "20px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+  ctx.fillStyle = "rgba(15,23,42,.55)";
+  ctx.font = "16px system-ui, -apple-system, Segoe UI, Roboto, Arial";
   ctx.textAlign = "center";
   ctx.fillText(text, canvas.width / 2, canvas.height / 2);
   ctx.restore();
 }
 
-function clearCanvas() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+function collectAllDates(seriesList) {
+  const set = new Set();
+  for (const s of seriesList) for (const p of (s.points || [])) set.add(p.date);
+  return [...set].sort();
 }
 
-function drawChart(series) {
-  if (!series?.length) {
-    drawEmpty("Нет данных");
+function renderChart(seriesList) {
+  if (chart) chart.destroy();
+
+  const labels = collectAllDates(seriesList);
+  const datasets = seriesList.map((s, i) => {
+    const byDate = Object.fromEntries((s.points || []).map((p) => [p.date, p.value]));
+    return {
+      label: s.name,
+      data: labels.map((d) => byDate[d] ?? null),
+      borderColor: PALETTE[i % PALETTE.length],
+      backgroundColor: PALETTE[i % PALETTE.length] + "20",
+      tension: 0.25,
+      borderWidth: 2,
+      pointRadius: labels.length > 60 ? 0 : 3,
+      pointHoverRadius: 5,
+      spanGaps: true,
+    };
+  });
+
+  canvas.parentElement.style.height = "440px";
+
+  chart = new Chart(canvas, {
+    type: "line",
+    data: { labels: labels.map(formatTickLabel), datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "bottom" },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `${ctx.dataset.label}: ${formatNum(ctx.parsed.y)}`,
+          },
+        },
+      },
+      scales: {
+        y: { beginAtZero: true, ticks: { callback: (v) => formatNum(v) } },
+        x: { ticks: { maxRotation: 0, autoSkipPadding: 16 } },
+      },
+    },
+  });
+}
+
+function renderTable(seriesList) {
+  tableHead.innerHTML = "";
+  tableBody.innerHTML = "";
+  if (!seriesList?.length) {
+    tableHead.innerHTML = "<tr><th>Дата</th></tr>";
     return;
   }
+  const dates = collectAllDates(seriesList);
 
-  const padding = { left: 70, right: 60, top: 24, bottom: 60 };
-  const w = canvas.width - padding.left - padding.right;
-  const h = canvas.height - padding.top - padding.bottom;
+  const trh = document.createElement("tr");
+  trh.innerHTML = `<th>Дата</th>` + seriesList.map((s) => `<th>${escapeHtml(s.name)}</th>`).join("");
+  tableHead.appendChild(trh);
 
-  const values = series.map((p) => p.value);
-  const minV = Math.min(...values);
-  const maxV = Math.max(...values);
-  const range = Math.max(1, maxV - minV);
-
-  const xFor = (i) => padding.left + (w * i) / Math.max(1, series.length - 1);
-  const yFor = (v) => padding.top + h - (h * (v - minV)) / range;
-
-  clearCanvas();
-
-  // фон
-  ctx.save();
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.restore();
-
-  // сетка + оси
-  drawGrid(padding, w, h, minV, maxV);
-
-  // линия
-  ctx.save();
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = "#2563eb";
-  ctx.beginPath();
-  series.forEach((p, i) => {
-    const x = xFor(i);
-    const y = yFor(p.value);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-  ctx.restore();
-
-  // точки
-  ctx.save();
-  ctx.fillStyle = "#1d4ed8";
-  series.forEach((p, i) => {
-    const x = xFor(i);
-    const y = yFor(p.value);
-    ctx.beginPath();
-    ctx.arc(x, y, 4, 0, Math.PI * 2);
-    ctx.fill();
-  });
-  ctx.restore();
-
-  // подписи X (редко)
-  ctx.save();
-  ctx.fillStyle = "#0f172a";
-  ctx.globalAlpha = 0.75;
-  ctx.font = "13px system-ui, -apple-system, Segoe UI, Roboto, Arial";
-
-  const yLabel = padding.top + h + 34;
-  const step = Math.ceil(series.length / 8);
-
-  for (let i = 0; i < series.length; i += step) {
-    const x = xFor(i);
-
-    if (i === 0) ctx.textAlign = "left";
-    else if (i >= series.length - 1) ctx.textAlign = "right";
-    else ctx.textAlign = "center";
-
-    ctx.fillText(formatTickLabel(series[i].date), x, yLabel);
-  }
-
-  // последняя (если вдруг step её пропустил)
-  const lastI = series.length - 1;
-  ctx.textAlign = "right";
-  ctx.fillText(formatTickLabel(series[lastI].date), xFor(lastI), yLabel);
-
-  ctx.restore();
-}
-
-function drawGrid(padding, w, h, minV, maxV) {
-  ctx.save();
-  ctx.strokeStyle = "#e5e7eb";
-  ctx.lineWidth = 1;
-
-  // горизонтальные линии (5)
-  const lines = 5;
-  for (let i = 0; i <= lines; i++) {
-    const y = padding.top + (h * i) / lines;
-    ctx.beginPath();
-    ctx.moveTo(padding.left, y);
-    ctx.lineTo(padding.left + w, y);
-    ctx.stroke();
-  }
-
-  // ось Y подписи
-  ctx.fillStyle = "#0f172a";
-  ctx.globalAlpha = 0.7;
-  ctx.font = "13px system-ui, -apple-system, Segoe UI, Roboto, Arial";
-  ctx.textAlign = "right";
-
-  for (let i = 0; i <= lines; i++) {
-    const v = Math.round(maxV - ((maxV - minV) * i) / lines);
-    const y = padding.top + (h * i) / lines + 4;
-    ctx.fillText(String(v), padding.left - 10, y);
-  }
-
-  // оси
-  ctx.globalAlpha = 1;
-  ctx.strokeStyle = "#cbd5e1";
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(padding.left, padding.top);
-  ctx.lineTo(padding.left, padding.top + h);
-  ctx.lineTo(padding.left + w, padding.top + h);
-  ctx.stroke();
-
-  ctx.restore();
-}
-
-function renderLegend(items) {
-  legendEl.innerHTML = "";
-  for (const it of items) {
-    const chip = document.createElement("div");
-    chip.className = "chip";
-    chip.innerHTML = `<span class="swatch"></span><span>${it.name}</span>`;
-    legendEl.appendChild(chip);
-  }
-}
-
-// ------------------- Таблица + KPI -------------------
-function fillTable(series) {
-  tableBody.innerHTML = "";
-  for (const p of series) {
+  const byDate = seriesList.map((s) => Object.fromEntries((s.points || []).map((p) => [p.date, p.value])));
+  for (const d of dates) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${escapeHtml(p.date)}</td><td>${formatNum(p.value)}</td>`;
+    const cells = byDate.map((m) => `<td>${m[d] != null ? formatNum(m[d]) : "—"}</td>`).join("");
+    tr.innerHTML = `<td>${escapeHtml(d)}</td>${cells}`;
     tableBody.appendChild(tr);
   }
 }
 
-function fillKPIs(series) {
-  if (!series?.length) {
-    kpiTotal.textContent = "—";
-    kpiAvg.textContent = "—";
-    kpiTrend.textContent = "—";
+function renderKPIs(seriesList) {
+  if (!seriesList?.length) {
+    kpiTotal.textContent = kpiAvg.textContent = kpiTrend.textContent = "—";
     return;
   }
-  const sum = series.reduce((a, b) => a + b.value, 0);
-  const avg = sum / series.length;
-  const first = series[0].value;
-  const last = series[series.length - 1].value;
+  const dates = collectAllDates(seriesList);
+  const totalByDate = dates.map((d) => {
+    let sum = 0;
+    for (const s of seriesList) {
+      const v = (s.points || []).find((p) => p.date === d)?.value;
+      if (typeof v === "number") sum += v;
+    }
+    return { date: d, value: sum };
+  });
+
+  const sum = totalByDate.reduce((a, b) => a + b.value, 0);
+  const avg = sum / Math.max(1, totalByDate.length);
+  const first = totalByDate[0]?.value || 0;
+  const last = totalByDate[totalByDate.length - 1]?.value || 0;
   const delta = last - first;
   const pct = first === 0 ? 0 : (delta / first) * 100;
 
   kpiTotal.textContent = formatNum(sum);
   kpiAvg.textContent = formatNum(Math.round(avg));
-
   const sign = delta > 0 ? "▲" : delta < 0 ? "▼" : "•";
   kpiTrend.textContent = `${sign} ${formatNum(delta)} (${pct.toFixed(1)}%)`;
 }
 
 function exportCSV() {
-  if (!lastSeries?.length) return;
-
-  const rows = [["date", "value"], ...lastSeries.map((p) => [p.date, String(p.value)])];
+  if (!lastResponse?.series?.length) return;
+  const seriesList = lastResponse.series;
+  const dates = collectAllDates(seriesList);
+  const header = ["date", ...seriesList.map((s) => s.name)];
+  const byDate = seriesList.map((s) => Object.fromEntries((s.points || []).map((p) => [p.date, p.value])));
+  const rows = [header, ...dates.map((d) => [d, ...byDate.map((m) => m[d] ?? "")])];
   const csv = rows.map((r) => r.map(csvEscape).join(",")).join("\n");
 
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
-
   const a = document.createElement("a");
   a.href = url;
-  a.download = `wordstat_${productSelect.value}_${selectedType}_${selectedGranularity}.csv`;
+  a.download = `wordstat_${selectedGranularity}_${dateFrom.value}_${dateTo.value}.csv`;
   document.body.appendChild(a);
   a.click();
   a.remove();
-
   URL.revokeObjectURL(url);
 }
 
@@ -939,17 +817,18 @@ function csvEscape(s) {
   return str;
 }
 
+function isoDate(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function formatNum(n) {
   return new Intl.NumberFormat("ru-RU").format(n);
 }
 
 function formatTickLabel(s) {
-  // "2026-01-15" -> "15.01"
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s.slice(8,10)}.${s.slice(5,7)}`;
-  // "2026-01" -> "01.2026"
-  if (/^\d{4}-\d{2}$/.test(s)) return `${s.slice(5,7)}.${s.slice(0,4)}`;
-  // "2026-W03" -> "W03"
-  if (/^\d{4}-W\d{2}$/.test(s)) return s.slice(5);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s.slice(8, 10)}.${s.slice(5, 7)}`;
+  if (/^\d{4}-\d{2}$/.test(s)) return `${s.slice(5, 7)}.${s.slice(0, 4)}`;
   return s;
 }
 
@@ -960,4 +839,8 @@ function escapeHtml(s) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function escapeAttr(s) {
+  return escapeHtml(s);
 }
