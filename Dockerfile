@@ -17,4 +17,6 @@ ENV CACHE_DB_PATH=/app/data/cache.sqlite3
 
 EXPOSE 3001
 
-CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:3001", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
+# 1 worker + threads: rate-limiter state живёт в одном процессе,
+# чтобы не превысить общий лимит Wordstat 10 RPS на API-ключ.
+CMD ["gunicorn", "-w", "1", "--threads", "4", "-b", "0.0.0.0:3001", "--timeout", "300", "--access-logfile", "-", "--error-logfile", "-", "app:app"]

@@ -34,6 +34,8 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import threading
+
 import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
@@ -54,6 +56,11 @@ YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID", "").strip()
 
 CACHE_ENABLED = os.getenv("CACHE_ENABLED", "1") == "1"
 CACHE_DB_PATH = os.getenv("CACHE_DB_PATH", str(BASE_DIR / "cache.sqlite3"))
+
+# Yandex Cloud SearchAPI rate limit: 10 RPS. Берём 8 для запаса.
+MAX_RPS = float(os.getenv("WORDSTAT_MAX_RPS", "8"))
+_RATE_LOCK = threading.Lock()
+_LAST_CALL_TS = [0.0]  # mutable holder so closure may update
 CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 RECENT_DAYS = 3
 RECENT_REFRESH_SECONDS = 24 * 60 * 60
@@ -226,6 +233,16 @@ def normalize_phrase_for_dynamics(phrase: str) -> str:
     return cleaned[:400]
 
 
+def _rate_limit() -> None:
+    """Token-bucket-lite: serialise calls so we never exceed MAX_RPS."""
+    min_interval = 1.0 / MAX_RPS
+    with _RATE_LOCK:
+        delta = time.monotonic() - _LAST_CALL_TS[0]
+        if delta < min_interval:
+            time.sleep(min_interval - delta)
+        _LAST_CALL_TS[0] = time.monotonic()
+
+
 # ---------- Wordstat API call (Yandex Cloud SearchAPI v2) ----------
 def call_wordstat_dynamics(
     phrase: str, period: str, from_iso: str, to_iso: str
@@ -242,10 +259,21 @@ def call_wordstat_dynamics(
     }
     if YANDEX_FOLDER_ID:
         payload["folderId"] = YANDEX_FOLDER_ID
-    r = requests.post(WORDSTAT_URL, json=payload, headers=headers, timeout=30)
-    if r.status_code != 200:
+
+    # Up to 5 retries on 429 / 5xx with exponential backoff
+    backoff = 1.0
+    for attempt in range(5):
+        _rate_limit()
+        r = requests.post(WORDSTAT_URL, json=payload, headers=headers, timeout=30)
+        if r.status_code == 200:
+            return r.json()
+        if r.status_code == 429 or 500 <= r.status_code < 600:
+            log.warning("wordstat %s on attempt %d, sleeping %.1fs", r.status_code, attempt + 1, backoff)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 16)
+            continue
         raise RuntimeError(f"Wordstat error {r.status_code}: {r.text[:500]}")
-    return r.json()
+    raise RuntimeError(f"Wordstat error {r.status_code} after retries: {r.text[:500]}")
 
 
 def fetch_series_points(
