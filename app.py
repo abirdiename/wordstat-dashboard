@@ -93,11 +93,6 @@ def cache_init() -> None:
         conn.commit()
 
 
-def _cache_make_key(payload: dict) -> str:
-    normalized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
 def _touches_recent_days(to_d: date) -> bool:
     return to_d >= (date.today() - timedelta(days=RECENT_DAYS - 1))
 
@@ -276,26 +271,60 @@ def call_wordstat_dynamics(
     raise RuntimeError(f"Wordstat error {r.status_code} after retries: {r.text[:500]}")
 
 
-def fetch_series_points(
-    queries: list[str], period: str, from_d: date, to_d: date
+def _phrase_cache_key(phrase: str, period: str, from_d: date, to_d: date) -> str:
+    """Стабильный ключ кэша для одной фразы."""
+    raw = f"phrase|v2|{phrase}|{period}|{from_d.isoformat()}|{to_d.isoformat()}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def fetch_phrase_points(
+    phrase: str, period: str, from_d: date, to_d: date
 ) -> list[dict]:
-    """Возвращает [{date, value}] — сумма по всем запросам серии."""
-    summed: dict[str, int] = {}
+    """Возвращает [{date, value}] для одной фразы. Кэширует на уровне фразы."""
+    key = _phrase_cache_key(phrase, period, from_d, to_d)
+    if CACHE_ENABLED:
+        cached = cache_get(key, to_d=to_d)
+        if cached is not None:
+            return cached
+
     from_iso = to_rfc3339(from_d)
     to_iso = to_rfc3339(to_d, end_of_day=True)
+    ws = call_wordstat_dynamics(phrase, period, from_iso, to_iso)
+
+    points: list[dict] = []
+    for p in ws.get("results", []) or []:
+        d = parse_rfc3339_date(p.get("date"))
+        try:
+            c = int(p.get("count") or 0)
+        except (TypeError, ValueError):
+            c = 0
+        if d:
+            points.append({"date": d, "value": c})
+    points.sort(key=lambda x: x["date"])
+
+    if CACHE_ENABLED:
+        cache_set(key, points)
+    return points
+
+
+def fetch_series_points(
+    queries: list[str], period: str, from_d: date, to_d: date,
+    phrase_cache: dict[str, list[dict]] | None = None,
+) -> list[dict]:
+    """Сумма точек по всем фразам серии. phrase_cache используется для дедупа в рамках одного запроса."""
+    summed: dict[str, int] = {}
     for q in queries:
         phrase = normalize_phrase_for_dynamics(str(q))
         if not phrase:
             continue
-        ws = call_wordstat_dynamics(phrase, period, from_iso, to_iso)
-        for p in ws.get("results", []) or []:
-            d = parse_rfc3339_date(p.get("date"))
-            try:
-                c = int(p.get("count") or 0)  # API возвращает int64 как строку
-            except (TypeError, ValueError):
-                c = 0
-            if d:
-                summed[d] = summed.get(d, 0) + c
+        if phrase_cache is not None and phrase in phrase_cache:
+            points = phrase_cache[phrase]
+        else:
+            points = fetch_phrase_points(phrase, period, from_d, to_d)
+            if phrase_cache is not None:
+                phrase_cache[phrase] = points
+        for p in points:
+            summed[p["date"]] = summed.get(p["date"], 0) + int(p["value"])
     return [{"date": d, "value": summed[d]} for d in sorted(summed.keys())]
 
 
@@ -353,27 +382,12 @@ def wordstat_proxy():
 
     from_api, to_api = fmt_ymd(from_d), fmt_ymd(to_d)
 
-    cache_key = None
-    if CACHE_ENABLED:
-        cache_payload = {
-            "series": [
-                {"name": s["name"], "queries": sorted(s["queries"])} for s in series_in
-            ],
-            "period": period,
-            "from": from_api,
-            "to": to_api,
-        }
-        cache_key = _cache_make_key(cache_payload)
-        cached = cache_get(cache_key, to_d=to_d)
-        if cached is not None:
-            resp = jsonify(cached)
-            resp.headers["X-Cache"] = "HIT"
-            return resp
-
     try:
+        # Дедуп: одна фраза, появляясь в разных сериях, вызывается ровно один раз.
+        phrase_cache: dict[str, list[dict]] = {}
         result_series = []
         for s in series_in:
-            points = fetch_series_points(s["queries"], period, from_d, to_d)
+            points = fetch_series_points(s["queries"], period, from_d, to_d, phrase_cache)
             result_series.append({"name": s["name"], "points": points})
         out = {
             "series": result_series,
@@ -385,17 +399,25 @@ def wordstat_proxy():
         log.exception("network error calling wordstat")
         return jsonify({"error": f"network: {e}"}), 502
     except RuntimeError as e:
+        msg = str(e)
+        if "wordstatRequestsPerHour" in msg:
+            friendly = (
+                "Часовой лимит Wordstat API исчерпан (по умолчанию 100 запросов в час на ключ). "
+                "Подожди до начала следующего часа или запроси увеличение квоты в Yandex Cloud → "
+                "Quotas → Search API. После этого даже большие подборки будут проходить."
+            )
+            log.warning("hourly quota hit")
+            return jsonify({"error": friendly, "detail": msg}), 429
+        if "wordstatRequestsPerSecond" in msg:
+            return jsonify({"error": "Wordstat: rate limit 10 RPS, попробуй ещё раз", "detail": msg}), 429
         log.error("wordstat api error: %s", e)
-        return jsonify({"error": str(e)}), 502
+        return jsonify({"error": msg}), 502
     except Exception as e:
         log.exception("unexpected error")
         return jsonify({"error": f"internal: {e}"}), 500
 
-    if CACHE_ENABLED and cache_key:
-        cache_set(cache_key, out)
-
     resp = jsonify(out)
-    resp.headers["X-Cache"] = "MISS"
+    resp.headers["X-Cache"] = "PHRASE-LEVEL"
     return resp
 
 
