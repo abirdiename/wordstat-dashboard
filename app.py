@@ -255,20 +255,31 @@ def call_wordstat_dynamics(
     if YANDEX_FOLDER_ID:
         payload["folderId"] = YANDEX_FOLDER_ID
 
-    # Up to 5 retries on 429 / 5xx with exponential backoff
+    # Retry policy:
+    #   - 429 hourly  -> fail-fast (ждать смысла нет, окно сбрасывается раз в час)
+    #   - 429 per-sec -> retry с короткой задержкой (мы под лимитом, но мог быть всплеск)
+    #   - 5xx          -> retry с экспоненциальным бэкоффом
     backoff = 1.0
-    for attempt in range(5):
+    for attempt in range(4):
         _rate_limit()
         r = requests.post(WORDSTAT_URL, json=payload, headers=headers, timeout=30)
         if r.status_code == 200:
             return r.json()
-        if r.status_code == 429 or 500 <= r.status_code < 600:
-            log.warning("wordstat %s on attempt %d, sleeping %.1fs", r.status_code, attempt + 1, backoff)
+        body = r.text[:500]
+        if r.status_code == 429:
+            if "wordstatRequestsPerHour" in body:
+                raise RuntimeError(f"Wordstat error 429: {body}")  # fail-fast
+            log.warning("wordstat 429 RPS on attempt %d, sleep %.1fs", attempt + 1, backoff)
             time.sleep(backoff)
-            backoff = min(backoff * 2, 16)
+            backoff = min(backoff * 2, 4)
             continue
-        raise RuntimeError(f"Wordstat error {r.status_code}: {r.text[:500]}")
-    raise RuntimeError(f"Wordstat error {r.status_code} after retries: {r.text[:500]}")
+        if 500 <= r.status_code < 600:
+            log.warning("wordstat %s on attempt %d, sleep %.1fs", r.status_code, attempt + 1, backoff)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 8)
+            continue
+        raise RuntimeError(f"Wordstat error {r.status_code}: {body}")
+    raise RuntimeError(f"Wordstat error {r.status_code} after retries: {body}")
 
 
 def _phrase_cache_key(phrase: str, period: str, from_d: date, to_d: date) -> str:
