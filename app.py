@@ -478,16 +478,27 @@ def wordstat_proxy():
         # 2. Параллельный fetch (кэш + пул)
         phrase_results = fetch_phrases_parallel(all_phrases, period, from_d, to_d)
 
-        # 3. Собираем серии
+        # 3. Собираем серии (помесячно от API)
         result_series = [
             {"name": s["name"], "points": aggregate_series(s["queries"], phrase_results)}
             for s in series_in
         ]
+
+        # 4. Если пользователь просил granularity=year — схлопываем месяцы в года
+        if granularity == "year":
+            for s in result_series:
+                yearly: dict[str, int] = {}
+                for p in s["points"]:
+                    y = p["date"][:4] + "-01-01"
+                    yearly[y] = yearly.get(y, 0) + int(p["value"])
+                s["points"] = [{"date": d, "value": yearly[d]} for d in sorted(yearly)]
+
         out = {
             "series": result_series,
             "from": from_api,
             "to": to_api,
-            "granularity": period,
+            "granularity": granularity,         # эхо выбора пользователя
+            "api_granularity": period,           # уровень исходных данных Wordstat
             "quota": quota_snapshot(),
         }
     except requests.RequestException as e:

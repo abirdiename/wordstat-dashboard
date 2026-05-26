@@ -705,8 +705,9 @@ async function run() {
     setStatus("ok", "Готово");
     if (data.quota) updateQuotaWidget(data.quota);
 
-    renderChart(data.series);
-    renderTable(data.series);
+    const gran = data.granularity || selectedGranularity;
+    renderChart(data.series, gran);
+    renderTable(data.series, gran);
     renderKPIs(data.series);
   } catch (err) {
     console.error(err);
@@ -741,20 +742,20 @@ function collectAllDates(seriesList) {
   return [...set].sort();
 }
 
-function renderChart(seriesList) {
+function renderChart(seriesList, granularity) {
   if (chart) chart.destroy();
 
-  const labels = collectAllDates(seriesList);
+  const rawLabels = collectAllDates(seriesList);
   const datasets = seriesList.map((s, i) => {
     const byDate = Object.fromEntries((s.points || []).map((p) => [p.date, p.value]));
     return {
       label: s.name,
-      data: labels.map((d) => byDate[d] ?? null),
+      data: rawLabels.map((d) => byDate[d] ?? null),
       borderColor: PALETTE[i % PALETTE.length],
       backgroundColor: PALETTE[i % PALETTE.length] + "20",
       tension: 0.25,
       borderWidth: 2,
-      pointRadius: labels.length > 60 ? 0 : 3,
+      pointRadius: rawLabels.length > 60 ? 0 : 3,
       pointHoverRadius: 5,
       spanGaps: true,
     };
@@ -764,7 +765,10 @@ function renderChart(seriesList) {
 
   chart = new Chart(canvas, {
     type: "line",
-    data: { labels: labels.map(formatTickLabel), datasets },
+    data: {
+      labels: rawLabels.map((d) => formatTickLabel(d, granularity)),
+      datasets,
+    },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -773,6 +777,8 @@ function renderChart(seriesList) {
         legend: { position: "bottom" },
         tooltip: {
           callbacks: {
+            // В тултипе всегда показываем полную дату YYYY-MM-DD
+            title: (items) => items.length ? rawLabels[items[0].dataIndex] : "",
             label: (ctx) => `${ctx.dataset.label}: ${formatNum(ctx.parsed.y)}`,
           },
         },
@@ -785,7 +791,7 @@ function renderChart(seriesList) {
   });
 }
 
-function renderTable(seriesList) {
+function renderTable(seriesList, granularity) {
   tableHead.innerHTML = "";
   tableBody.innerHTML = "";
   if (!seriesList?.length) {
@@ -801,8 +807,9 @@ function renderTable(seriesList) {
   const byDate = seriesList.map((s) => Object.fromEntries((s.points || []).map((p) => [p.date, p.value])));
   for (const d of dates) {
     const tr = document.createElement("tr");
+    const label = formatTickLabel(d, granularity);
     const cells = byDate.map((m) => `<td>${m[d] != null ? formatNum(m[d]) : "—"}</td>`).join("");
-    tr.innerHTML = `<td>${escapeHtml(d)}</td>${cells}`;
+    tr.innerHTML = `<td>${escapeHtml(label)}</td>${cells}`;
     tableBody.appendChild(tr);
   }
 }
@@ -870,10 +877,19 @@ function formatNum(n) {
   return new Intl.NumberFormat("ru-RU").format(n);
 }
 
-function formatTickLabel(s) {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s.slice(8, 10)}.${s.slice(5, 7)}`;
-  if (/^\d{4}-\d{2}$/.test(s)) return `${s.slice(5, 7)}.${s.slice(0, 4)}`;
-  return s;
+function formatTickLabel(s, granularity) {
+  // Все даты приходят как YYYY-MM-DD
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const yyyy = s.slice(0, 4);
+  const mm   = s.slice(5, 7);
+  const dd   = s.slice(8, 10);
+  switch (granularity) {
+    case "year":  return yyyy;                         // 2025
+    case "month": return `${mm}.${yyyy}`;              // 04.2025
+    case "week":  // fallthrough — для недель так же как для дня
+    case "day":
+    default:      return `${dd}.${mm}.${yyyy.slice(2)}`; // 15.04.25
+  }
 }
 
 function escapeHtml(s) {
