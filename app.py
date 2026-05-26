@@ -31,6 +31,8 @@ import logging
 import os
 import sqlite3
 import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -57,10 +59,20 @@ YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID", "").strip()
 CACHE_ENABLED = os.getenv("CACHE_ENABLED", "1") == "1"
 CACHE_DB_PATH = os.getenv("CACHE_DB_PATH", str(BASE_DIR / "cache.sqlite3"))
 
-# Yandex Cloud SearchAPI rate limit: 10 RPS. Берём 8 для запаса.
-MAX_RPS = float(os.getenv("WORDSTAT_MAX_RPS", "8"))
+# Yandex Cloud SearchAPI rate limit: 10 RPS / 100..2000 RPH per service account.
+MAX_RPS = float(os.getenv("WORDSTAT_MAX_RPS", "9"))
+HOURLY_QUOTA = int(os.getenv("WORDSTAT_HOURLY_QUOTA", "2000"))
+PARALLEL_WORKERS = int(os.getenv("WORDSTAT_PARALLEL", "8"))
+
 _RATE_LOCK = threading.Lock()
-_LAST_CALL_TS = [0.0]  # mutable holder so closure may update
+# Будущая «отметка», начиная с которой ближайший вызов может стартовать.
+# Не «когда был последний», а «когда можно следующий» — ленивая модель.
+_NEXT_SLOT_TS = [0.0]
+
+_CALL_LOG_LOCK = threading.Lock()
+_CALL_LOG: deque[float] = deque()  # timestamps of API calls, for hourly counter
+
+_executor = ThreadPoolExecutor(max_workers=PARALLEL_WORKERS, thread_name_prefix="ws")
 CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 RECENT_DAYS = 3
 RECENT_REFRESH_SECONDS = 24 * 60 * 60
@@ -163,6 +175,11 @@ def health():
     )
 
 
+@app.get("/api/quota")
+def quota():
+    return jsonify(quota_snapshot())
+
+
 # ---------- Date / period helpers ----------
 def parse_ymd(s: str) -> date:
     return datetime.strptime(s, "%Y-%m-%d").date()
@@ -229,13 +246,46 @@ def normalize_phrase_for_dynamics(phrase: str) -> str:
 
 
 def _rate_limit() -> None:
-    """Token-bucket-lite: serialise calls so we never exceed MAX_RPS."""
+    """Резервируем «слот» в очереди (≤ MAX_RPS) и спим до него — БЕЗ удержания лока.
+    Это даёт параллельным потокам реально по MAX_RPS заявок в секунду суммарно."""
     min_interval = 1.0 / MAX_RPS
     with _RATE_LOCK:
-        delta = time.monotonic() - _LAST_CALL_TS[0]
-        if delta < min_interval:
-            time.sleep(min_interval - delta)
-        _LAST_CALL_TS[0] = time.monotonic()
+        now = time.monotonic()
+        my_slot = max(now, _NEXT_SLOT_TS[0])
+        _NEXT_SLOT_TS[0] = my_slot + min_interval
+    sleep_for = my_slot - time.monotonic()
+    if sleep_for > 0:
+        time.sleep(sleep_for)
+    _record_call()
+
+
+def _record_call() -> None:
+    """Запоминаем факт вызова для часового счётчика."""
+    now = time.time()
+    with _CALL_LOG_LOCK:
+        _CALL_LOG.append(now)
+        cutoff = now - 3600
+        while _CALL_LOG and _CALL_LOG[0] < cutoff:
+            _CALL_LOG.popleft()
+
+
+def quota_snapshot() -> dict:
+    """Текущее использование часовой квоты + сколько до сброса."""
+    now = time.time()
+    cutoff = now - 3600
+    with _CALL_LOG_LOCK:
+        while _CALL_LOG and _CALL_LOG[0] < cutoff:
+            _CALL_LOG.popleft()
+        used = len(_CALL_LOG)
+        oldest = _CALL_LOG[0] if _CALL_LOG else now
+    # Окно скользящее: один слот «освободится» через (oldest + 3600 - now) секунд.
+    reset_in = max(0, int(oldest + 3600 - now))
+    return {
+        "used": used,
+        "limit": HOURLY_QUOTA,
+        "remaining": max(0, HOURLY_QUOTA - used),
+        "reset_in_sec": reset_in,
+    }
 
 
 # ---------- Wordstat API call (Yandex Cloud SearchAPI v2) ----------
@@ -318,23 +368,44 @@ def fetch_phrase_points(
     return points
 
 
-def fetch_series_points(
-    queries: list[str], period: str, from_d: date, to_d: date,
-    phrase_cache: dict[str, list[dict]] | None = None,
+def fetch_phrases_parallel(
+    phrases: list[str], period: str, from_d: date, to_d: date
+) -> dict[str, list[dict]]:
+    """Параллельно тянет все фразы (с дедупом и кэшом). Возвращает {phrase: points}.
+    Если хоть один вызов упёрся в hourly-quota — пробрасываем ошибку наверх."""
+    unique = list(dict.fromkeys(phrases))
+    out: dict[str, list[dict]] = {}
+    if not unique:
+        return out
+    futs = {
+        _executor.submit(fetch_phrase_points, p, period, from_d, to_d): p
+        for p in unique
+    }
+    first_err: Exception | None = None
+    for fut in as_completed(futs):
+        phrase = futs[fut]
+        try:
+            out[phrase] = fut.result()
+        except Exception as e:
+            if first_err is None:
+                first_err = e
+            # ставим пустую серию, чтобы фронт не упал на отсутствующем ключе
+            out[phrase] = []
+    if first_err is not None:
+        raise first_err
+    return out
+
+
+def aggregate_series(
+    queries: list[str], phrase_results: dict[str, list[dict]]
 ) -> list[dict]:
-    """Сумма точек по всем фразам серии. phrase_cache используется для дедупа в рамках одного запроса."""
+    """Складывает точки фраз серии в единый ряд {date, value}."""
     summed: dict[str, int] = {}
     for q in queries:
         phrase = normalize_phrase_for_dynamics(str(q))
         if not phrase:
             continue
-        if phrase_cache is not None and phrase in phrase_cache:
-            points = phrase_cache[phrase]
-        else:
-            points = fetch_phrase_points(phrase, period, from_d, to_d)
-            if phrase_cache is not None:
-                phrase_cache[phrase] = points
-        for p in points:
+        for p in phrase_results.get(phrase, []):
             summed[p["date"]] = summed.get(p["date"], 0) + int(p["value"])
     return [{"date": d, "value": summed[d]} for d in sorted(summed.keys())]
 
@@ -394,17 +465,30 @@ def wordstat_proxy():
     from_api, to_api = fmt_ymd(from_d), fmt_ymd(to_d)
 
     try:
-        # Дедуп: одна фраза, появляясь в разных сериях, вызывается ровно один раз.
-        phrase_cache: dict[str, list[dict]] = {}
-        result_series = []
+        # 1. Уникальные фразы со всех серий — каждая стреляет ровно один раз
+        all_phrases: list[str] = []
+        seen: set[str] = set()
         for s in series_in:
-            points = fetch_series_points(s["queries"], period, from_d, to_d, phrase_cache)
-            result_series.append({"name": s["name"], "points": points})
+            for q in s["queries"]:
+                ph = normalize_phrase_for_dynamics(str(q))
+                if ph and ph not in seen:
+                    seen.add(ph)
+                    all_phrases.append(ph)
+
+        # 2. Параллельный fetch (кэш + пул)
+        phrase_results = fetch_phrases_parallel(all_phrases, period, from_d, to_d)
+
+        # 3. Собираем серии
+        result_series = [
+            {"name": s["name"], "points": aggregate_series(s["queries"], phrase_results)}
+            for s in series_in
+        ]
         out = {
             "series": result_series,
             "from": from_api,
             "to": to_api,
             "granularity": period,
+            "quota": quota_snapshot(),
         }
     except requests.RequestException as e:
         log.exception("network error calling wordstat")

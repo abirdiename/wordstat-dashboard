@@ -383,7 +383,19 @@ generic: ["карта на азс",
 const LS_QUERY_CONFIG = "wordstat_query_config_v2";
 const LS_FILTERS      = "wordstat_filters_v1";
 
-const TYPE_LABEL = { brand: "Бренд", generic: "Дженерик", competitors: "Конкуренты" };
+const TYPE_LABEL = { brand: "Бренд", generic: "Дженерик" };
+
+// Русские склонения: pluralize(5, ['серия','серии','серий']) -> 'серий'
+function pluralize(n, forms) {
+  const mod10 = Math.abs(n) % 10;
+  const mod100 = Math.abs(n) % 100;
+  if (mod100 >= 11 && mod100 <= 19) return forms[2];
+  if (mod10 === 1) return forms[0];
+  if (mod10 >= 2 && mod10 <= 4) return forms[1];
+  return forms[2];
+}
+const FORMS_SERIES  = ["серия", "серии", "серий"];
+const FORMS_QUERIES = ["запрос", "запроса", "запросов"];
 
 const PALETTE = [
   "#2563eb", "#ef4444", "#10b981", "#f59e0b", "#7c3aed",
@@ -410,6 +422,8 @@ const canvas = $("chartCanvas");
 const tableHead = document.querySelector("#dataTable thead");
 const tableBody = document.querySelector("#dataTable tbody");
 const exportCsvBtn = $("exportCsvBtn");
+const quotaText = $("quotaText");
+const quotaBarFill = $("quotaBarFill");
 
 const modalBackdrop = $("modalBackdrop");
 const modalCloseBtn = $("modalCloseBtn");
@@ -461,6 +475,36 @@ function init() {
 
   setStatus("idle", "Готово");
   drawEmpty();
+  refreshQuota();
+  setInterval(refreshQuota, 30000);
+}
+
+async function refreshQuota() {
+  try {
+    const res = await fetch("/api/quota", { cache: "no-store" });
+    if (!res.ok) return;
+    const q = await res.json();
+    updateQuotaWidget(q);
+  } catch {}
+}
+
+function updateQuotaWidget(q) {
+  if (!q || typeof q.used !== "number") return;
+  const used = q.used;
+  const limit = q.limit || 2000;
+  const remaining = q.remaining ?? Math.max(0, limit - used);
+  quotaText.textContent = `${formatNum(used)} / ${formatNum(limit)}`;
+  const pct = Math.min(100, Math.round((used / Math.max(1, limit)) * 100));
+  quotaBarFill.style.width = pct + "%";
+  quotaBarFill.classList.remove("warn", "danger");
+  if (pct >= 85) quotaBarFill.classList.add("danger");
+  else if (pct >= 60) quotaBarFill.classList.add("warn");
+  let title = `Использовано: ${used} из ${limit} (осталось ${remaining}).`;
+  if (q.reset_in_sec > 0) {
+    const m = Math.floor(q.reset_in_sec / 60);
+    title += ` Окно сместится на 1 запрос через ~${m} мин.`;
+  }
+  quotaText.parentElement.title = title;
 }
 
 function saveFilters() {
@@ -551,12 +595,11 @@ function loadQueryConfig() {
     if (!parsed || typeof parsed !== "object") return structuredClone(DEFAULT_QUERY_CONFIG);
     const merged = {};
     for (const product of Object.keys({ ...DEFAULT_QUERY_CONFIG, ...parsed })) {
-      const base = DEFAULT_QUERY_CONFIG[product] || { brand: [], generic: [], competitors: [] };
+      const base = DEFAULT_QUERY_CONFIG[product] || { brand: [], generic: [] };
       const user = parsed[product] || {};
       merged[product] = {
         brand: Array.isArray(user.brand) ? user.brand : (base.brand || []),
         generic: Array.isArray(user.generic) ? user.generic : (base.generic || []),
-        competitors: Array.isArray(user.competitors) ? user.competitors : (base.competitors || []),
       };
     }
     return merged;
@@ -596,7 +639,7 @@ function loadEditorText() {
   const type = editTypeSelect.value;
   const list = getQueries(product, type);
   queriesTextarea.value = list.join("\n");
-  modalSubtitle.textContent = `${product} • ${TYPE_LABEL[type]} • ${list.length} запрос(ов)`;
+  modalSubtitle.textContent = `${product} • ${TYPE_LABEL[type]} • ${list.length} ${pluralize(list.length, FORMS_QUERIES)}`;
 }
 
 function saveEditor() {
@@ -606,7 +649,7 @@ function saveEditor() {
     .split("\n")
     .map((s) => s.trim())
     .filter(Boolean);
-  queryConfig[product] = queryConfig[product] || { brand: [], generic: [], competitors: [] };
+  queryConfig[product] = queryConfig[product] || { brand: [], generic: [] };
   queryConfig[product][type] = lines;
   saveQueryConfig();
   loadEditorText();
@@ -643,8 +686,9 @@ async function run() {
 
   if (!series.length) { setStatus("warn", "У выбранных комбинаций нет запросов"); return; }
 
-  setStatus("busy", `Загружаю ${series.length} серий…`);
-  chartSubtitle.textContent = `${series.length} серий • ${granularityLabel(selectedGranularity)}`;
+  const seriesWord = pluralize(series.length, FORMS_SERIES);
+  setStatus("busy", `Загружаю ${series.length} ${seriesWord}…`);
+  chartSubtitle.textContent = `${series.length} ${seriesWord} • ${granularityLabel(selectedGranularity)}`;
 
   try {
     const res = await fetch("/api/wordstat", {
@@ -658,8 +702,8 @@ async function run() {
     if (!data?.series) throw new Error("Неверный формат ответа");
 
     lastResponse = data;
-    const cacheTag = res.headers.get("X-Cache");
-    setStatus("ok", cacheTag === "HIT" ? "Готово (из кэша)" : "Готово");
+    setStatus("ok", "Готово");
+    if (data.quota) updateQuotaWidget(data.quota);
 
     renderChart(data.series);
     renderTable(data.series);
